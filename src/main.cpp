@@ -4,13 +4,15 @@
 #include "hal/CardputerGps.h"
 #include "hal/CardputerMotion.h"
 #include "hal/CardputerIR.h"
+#include "hal/CardputerTask.h"
 
-Cardputer      c;
-CardputerSd    sd;
-CardputerLora  lora;
-CardputerGps   gps;
-CardputerMotion motion;
-CardputerIR    ir;
+Cardputer           c;
+CardputerSd         sd;
+CardputerLora       lora;
+CardputerGps        gps;
+CardputerMotion     motion;
+CardputerIR         ir;
+CardputerTaskManager tasks;
 
 // wrap-around counter
 class Counter {
@@ -400,16 +402,31 @@ class TabBattery : public Tab {
 public:
   TabBattery() : Tab("BAT") {}
 
-  void setup() override {}
+  void setup() override {
+    // Read immediately so we have values before the first 2s tick.
+    _read();
+    // Task: re-read every 2s. On hardware this is a real FreeRTOS task;
+    // on SDL it's called each loop() by tasks.update() and uses a frame
+    // counter to throttle (CardputerTask::delay is a no-op on SDL).
+    _task.start("battery", 2048, [this]() {
+#ifdef SDL_h_
+      // Cooperative: count frames (~60fps), refresh every ~120 frames = ~2s
+      if (++_frames >= 120) { _frames = 0; _read(); }
+#else
+      CardputerTask::delay(2000);
+      _read();
+#endif
+    }, &tasks);
+  }
 
   void update() override {
     int cx      = c.width()  / 2;
     int cy      = c.height() / 2;
     int w       = c.width();
 
-    bool  charging = c.isCharging();
-    int   level    = c.batteryLevel();
-    int   voltage  = c.batteryVoltage();
+    bool charging = _charging;
+    int  level    = _level;
+    int  voltage  = _voltage;
 
     c.clear(BLACK);
     c.setTextSize(1.0);
@@ -456,6 +473,19 @@ public:
       c.drawCenterString("on battery", cx, by + bh + 18);
     }
   }
+
+private:
+  CardputerTask _task;
+  bool _charging = false;
+  int  _level    = -1;
+  int  _voltage  = 0;
+  int  _frames   = 0;   // SDL frame counter for 2s throttle
+
+  void _read() {
+    _charging = c.isCharging();
+    _level    = c.batteryLevel();
+    _voltage  = c.batteryVoltage();
+  }
 };
 
 
@@ -477,6 +507,7 @@ void setup(void) {
   gps.setup();
   motion.setup();
   ir.setup();
+  tasks.setup();
   tabs[currentTab]->setup();
 }
 
@@ -484,6 +515,7 @@ void loop(void) {
   lora.loop();
   gps.loop();
   motion.loop();
+  tasks.update();
 
   tabs[currentTab]->update();
 

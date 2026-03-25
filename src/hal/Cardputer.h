@@ -172,8 +172,9 @@ public:
 #endif
   }
 
-  // Battery level 0–100 %, derived from voltage.
-  // Uses the same 3300–4150 mV curve as M5Unified.
+  // Battery level 0–100 %.
+  // Averages ADC_SAMPLES reads to smooth the noisy ADC on GPIO10.
+  // Returns -1 on ADC error.
   int batteryLevel() {
 #ifdef SDL_h_
 #ifdef __EMSCRIPTEN__
@@ -182,16 +183,17 @@ public:
     return 100;
 #endif
 #else
-    int mv = M5Cardputer.Power.getBatteryVoltage();
-    if (mv <= 0)    return -1;   // ADC error
-    int level = (mv - 3300) * 100 / (4150 - 3300);
+    int mv = _avgVoltage();
+    if (mv <= 0) return -1;
+    // M5Unified formula: 3300–4150 mV range, denominator 800
+    int level = (mv - 3300) * 100 / 800;
     if (level < 0)   level = 0;
     if (level > 100) level = 100;
     return level;
 #endif
   }
 
-  // Battery voltage in millivolts (raw ADC × 2 on Cardputer).
+  // Battery voltage in millivolts, averaged over ADC_SAMPLES reads.
   int batteryVoltage() {
 #ifdef SDL_h_
 #ifdef __EMSCRIPTEN__
@@ -200,7 +202,7 @@ public:
     return 4200;
 #endif
 #else
-    return M5Cardputer.Power.getBatteryVoltage();
+    return _avgVoltage();
 #endif
   }
 
@@ -210,6 +212,18 @@ private:
   M5GFX    _display;
 #ifndef SDL_h_
   M5GFX*   _hw_display;
+
+  // Average multiple ADC reads to smooth the noisy GPIO10 battery divider.
+  static const int ADC_SAMPLES = 8;
+  int _avgVoltage() {
+    int32_t sum = 0;
+    for (int i = 0; i < ADC_SAMPLES; i++) {
+      int v = M5Cardputer.Power.getBatteryVoltage();
+      if (v <= 0) return 0;
+      sum += v;
+    }
+    return sum / ADC_SAMPLES;
+  }
 #endif
 
   // Returns the correct display reference for either target
