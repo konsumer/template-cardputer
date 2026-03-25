@@ -27,7 +27,7 @@ m.loraOut = bytes => console.log('LoRa sent:', bytes)
 m.loraInject([0x48, 0x65, 0x6c, 0x6c, 0x6f])
 
 // fake the number of  satellites seen
-m.SatelliteCount = 5
+m.satelliteCount = 5
 
 // Set a GPS fix
 m.gpsSet(51.5074, -0.1278)
