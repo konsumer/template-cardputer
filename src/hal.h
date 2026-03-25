@@ -1,4 +1,5 @@
-// this abstracts hardware into same functions
+#pragma once
+// this abstracts hardware into same functions across native/web/cardputer
 
 #include <M5GFX.h>
 
@@ -216,6 +217,171 @@ bool testFileIO(const char *path) {
 }
 #endif
 
+// ---------------------------------------------------------------------------
+// LoRa + GPS
+// ---------------------------------------------------------------------------
+
+#ifdef SDL_h_
+
+#include <functional>
+
+// --- LoRa stub ---
+// Incoming bytes are injected from JS via hal_loraInject (exported below).
+// A small ring buffer holds pending packets until hal_loop drains them.
+
+static std::function<void(uint8_t*, int)> _lora_cb;
+static uint8_t  _lora_buf[256];
+static int      _lora_len = 0;
+static bool     _lora_pending = false;
+
+void hal_onLoraMessage(std::function<void(uint8_t*, int)> cb) { _lora_cb = cb; }
+
+bool hal_sendLoraMessage(uint8_t *data, int len) {
+#ifdef __EMSCRIPTEN__
+  // Expose outgoing bytes to JS as a Uint8Array on window.loraOut
+  EM_ASM({
+    if (Module.loraOut) Module.loraOut(Array.from(Module.HEAPU8.subarray($0, $0 + $1)));
+  }, data, len);
+#endif
+  return true;
+}
+
+// Called from JS: Module._hal_loraInject(ptr, len) — or use the helper below
+extern "C" void hal_loraInject(uint8_t *data, int len) {
+  if (len > (int)sizeof(_lora_buf)) len = sizeof(_lora_buf);
+  memcpy(_lora_buf, data, len);
+  _lora_len = len;
+  _lora_pending = true;
+}
+
+// --- GPS stub ---
+static double _gps_lat = 0.0, _gps_lng = 0.0;
+static bool   _gps_valid = false;
+
+bool hal_getLocation(double *lat, double *lng) {
+  if (!_gps_valid) return false;
+  *lat = _gps_lat;
+  *lng = _gps_lng;
+  return true;
+}
+
+int hal_gpsSatellites() {
+#ifdef __EMSCRIPTEN__
+  return EM_ASM_INT({ return Module.satelliteCount || 0; });
+#else
+  return 0;
+#endif
+}
+
+// Called from JS: Module._hal_gpsSetLocation(lat_double, lng_double)
+extern "C" void hal_gpsSetLocation(double lat, double lng) {
+  _gps_lat = lat;
+  _gps_lng = lng;
+  _gps_valid = true;
+}
+
+#ifdef __EMSCRIPTEN__
+// Expose JS-callable helpers on the window object so the browser console can use them:
+//   window.loraInject([0x48,0x65,0x6c,0x6c,0x6f])
+//   window.gpsSet(51.5074, -0.1278)
+EM_JS(void, hal_js_helpers, (), {
+  Module.loraInject = function(bytes) {
+    var buf = Module._malloc(bytes.length);
+    Module.HEAPU8.set(bytes, buf);
+    Module._hal_loraInject(buf, bytes.length);
+    Module._free(buf);
+  };
+  Module.loraOut = null;      // set to a function to receive outgoing bytes
+  Module.satelliteCount = 0;  // set to simulate satellite count
+  Module.gpsSet = function(lat, lng) {
+    Module._hal_gpsSetLocation(lat, lng);
+  };
+});
+#endif
+
+#else
+// ---------------------------------------------------------------------------
+// Cardputer hardware: RadioLib SX1262 + MultipleSatellite (TinyGPSPlus)
+// ---------------------------------------------------------------------------
+#include <RadioLib.h>
+#include <MultipleSatellite.h>
+#include <functional>
+
+#define LORA_BW           125.0f
+#define LORA_SF           12
+#define LORA_CR           5
+#define LORA_FREQ         868.0
+#define LORA_SYNC_WORD    0x34
+#define LORA_TX_POWER     22
+#define LORA_PREAMBLE_LEN 20
+
+// NSS, IRQ, RST, BUSY
+static SX1262 _lora_radio = new Module(GPIO_NUM_5, GPIO_NUM_4, GPIO_NUM_3, GPIO_NUM_6);
+static bool _lora_ok = false;
+static volatile bool _lora_rx_flag = false;
+static volatile bool _lora_tx_flag = false;
+static std::function<void(uint8_t*, int)> _lora_cb;
+
+ICACHE_RAM_ATTR static void _lora_rx_isr() { _lora_rx_flag = true; }
+ICACHE_RAM_ATTR static void _lora_tx_isr() { _lora_tx_flag = true; }
+
+void hal_onLoraMessage(std::function<void(uint8_t*, int)> cb) { _lora_cb = cb; }
+
+bool hal_sendLoraMessage(uint8_t *data, int len) {
+  if (!_lora_ok) return false;
+  return _lora_radio.transmit(data, len) == RADIOLIB_ERR_NONE;
+}
+
+// GPS: Serial1, RX=15, TX=13
+static MultipleSatellite _gps(Serial1, 115200, SERIAL_8N1, 15, 13);
+static bool _gps_started = false;
+
+bool hal_getLocation(double *lat, double *lng) {
+  if (!_gps_started || !_gps.location.isValid()) return false;
+  *lat = _gps.location.lat();
+  *lng = _gps.location.lng();
+  return true;
+}
+
+int hal_gpsSatellites() {
+  if (!_gps_started) return 0;
+  return (int)_gps.satellites.value();
+}
+#endif
+
+// ---------------------------------------------------------------------------
+// Shared LoRa/GPS poll — called from hal_loop()
+// ---------------------------------------------------------------------------
+static void _hal_lora_gps_poll() {
+#ifdef SDL_h_
+  // Drain any injected LoRa packet
+  if (_lora_pending && _lora_cb) {
+    _lora_pending = false;
+    _lora_cb(_lora_buf, _lora_len);
+  }
+#else
+  // Drain incoming LoRa packets
+  if (_lora_rx_flag) {
+    _lora_rx_flag = false;
+    int len = _lora_radio.getPacketLength();
+    if (len > 0 && _lora_cb) {
+      uint8_t buf[256];
+      if (len > (int)sizeof(buf)) len = sizeof(buf);
+      if (_lora_radio.readData(buf, len) == RADIOLIB_ERR_NONE) {
+        _lora_cb(buf, len);
+      }
+    }
+    _lora_radio.startReceive();
+  }
+  if (_lora_tx_flag) {
+    _lora_tx_flag = false;
+    _lora_radio.startReceive();
+  }
+  // Update GPS
+  if (_gps_started) _gps.updateGPS();
+#endif
+}
+
 static M5GFX _display;
 static M5Canvas gfx(&_display);
 
@@ -231,6 +397,19 @@ bool hal_setup() {
   digitalWrite(5, HIGH);
   SPI.begin(SD_SPI_SCK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, SD_SPI_CS_PIN);
   _sd_ok = SD.begin(SD_SPI_CS_PIN, SPI, 25000000);
+  // LoRa init
+  if (_lora_radio.begin(LORA_FREQ, LORA_BW, LORA_SF, LORA_CR, LORA_SYNC_WORD,
+                        LORA_TX_POWER, LORA_PREAMBLE_LEN, 3.0, true) == RADIOLIB_ERR_NONE) {
+    _lora_radio.setCurrentLimit(140);
+    _lora_radio.setPacketReceivedAction(_lora_rx_isr);
+    _lora_radio.setPacketSentAction(_lora_tx_isr);
+    _lora_radio.startReceive();
+    _lora_ok = true;
+  }
+  // GPS init — hot start reuses cached almanac for faster fix
+  _gps.begin();
+  _gps.setSystemBootMode(BOOT_HOST_START);
+  _gps_started = true;
 #else
   _display.init();
   // Require Ctrl+Shift for Panel_sdl rotate/scale shortcuts so normal key
@@ -238,6 +417,9 @@ bool hal_setup() {
   lgfx::Panel_sdl::setShortcutKeymod((SDL_Keymod)(KMOD_CTRL | KMOD_SHIFT));
   mkdir(SD_ROOT, 0755); // ensure sdcard dir exists
   _sd_ok = true;
+#ifdef __EMSCRIPTEN__
+  hal_js_helpers();
+#endif
 #endif
   gfx.setColorDepth(16);
   gfx.createSprite(_display.width(), _display.height());
@@ -249,6 +431,7 @@ void hal_loop() {
 #ifndef SDL_h_
   M5Cardputer.update();
 #endif
+  _hal_lora_gps_poll();
   gfx.pushSprite(&_display, 0, 0);
 }
 

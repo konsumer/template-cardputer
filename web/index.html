@@ -27,7 +27,18 @@
 		const canvas = document.getElementById('canvas');
 		const m = await loadFW({ canvas })
 
-		// you can read into m, if you need to, like FS, or lora (for fake radio)
+		// You can use web APIs to test things
+
+		m.loraOut = bytes => console.log('LoRa sent:', bytes)
+
+		// Simulate incoming LoRa bytes
+		m.loraInject(new TextEncoder().encode("Hello from web."))
+
+		// fake the number of  satellites seen
+		m.SatelliteCount = 5
+
+		// Set a GPS fix
+		m.gpsSet(51.5074, -0.1278)
 
 		// this fixes emscripten's jenky canvas-size stuff
 		const observer = new ResizeObserver(() => {

@@ -127,7 +127,7 @@ public:
 
 class TabCounter : public Tab {
 public:
-  TabCounter() : Tab("SD Counter") {}
+  TabCounter() : Tab("SD") {}
 
   void setup() override {
     if (!hal_sdOk()) return;
@@ -165,7 +165,75 @@ private:
   }
 };
 
-std::vector<Tab*> tabs = { new TabKeys(), new TabGraphics(), new TabCounter() };
+class TabRadio : public Tab {
+public:
+  TabRadio() : Tab("Radio") {}
+
+  void setup() override {
+    _log[0][0] = '\0';
+    _logCount = 0;
+    hal_onLoraMessage([this](uint8_t *data, int len) {
+      // shift log up and add new entry at bottom
+      if (_logCount < LOG_LINES) _logCount++;
+      for (int i = 0; i < _logCount - 1; i++) {
+        memcpy(_log[i], _log[i + 1], LOG_WIDTH);
+      }
+      int n = len < LOG_WIDTH - 1 ? len : LOG_WIDTH - 1;
+      memcpy(_log[_logCount - 1], data, n);
+      _log[_logCount - 1][n] = '\0';
+    });
+  }
+
+  void update() override {
+    int cx = gfx.width() / 2;
+    int tabBarH = 16;
+    int h = gfx.height() - tabBarH;
+
+    gfx.clear(BLACK);
+    gfx.setTextColor(WHITE);
+
+    // --- GPS ---
+    double lat, lng;
+    int sats = hal_gpsSatellites();
+    gfx.setTextSize(1.0);
+    if (hal_getLocation(&lat, &lng)) {
+      char buf[48];
+      snprintf(buf, sizeof(buf), "%.5f, %.5f", lat, lng);
+      gfx.setTextColor(TFT_GREEN);
+      gfx.drawCenterString(buf, cx, 2);
+    } else {
+      char buf[32];
+      snprintf(buf, sizeof(buf), "GPS: no fix (sats:%d)", sats);
+      gfx.setTextColor(sats > 0 ? TFT_YELLOW : TFT_DARKGREY);
+      gfx.drawCenterString(buf, cx, 2);
+    }
+
+    // --- LoRa log ---
+    gfx.setTextColor(WHITE);
+    int lineH = 12;
+    int logY = 16;
+    for (int i = 0; i < _logCount; i++) {
+      gfx.drawString(_log[i], 2, logY + i * lineH);
+    }
+
+    // --- Send button: ENTER sends a test packet ---
+    gfx.setTextColor(TFT_YELLOW);
+    gfx.drawCenterString("[ENTER] send ping", cx, h - 14);
+
+    if (hal_isKeyPressed(KEY_ENTER)) {
+      const char *msg = "ping";
+      hal_sendLoraMessage((uint8_t*)msg, strlen(msg));
+    }
+  }
+
+private:
+  static const int LOG_LINES = 6;
+  static const int LOG_WIDTH = 40;
+  char _log[LOG_LINES][LOG_WIDTH];
+  int  _logCount = 0;
+};
+
+std::vector<Tab*> tabs = { new TabKeys(), new TabGraphics(), new TabCounter(), new TabRadio() };
 Counter currentTab(tabs.size());
 
 void setup(void) {

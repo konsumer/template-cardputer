@@ -12,3 +12,23 @@ npm run cardputer
 # run native
 npm run native
 ```
+
+The web-demo lets you test the radio:
+
+```js
+import loadFW from './index.mjs'
+
+const m = await loadFW({ canvas: document.getElementById('canvas') })
+
+// Hook outgoing LoRa sends
+m.loraOut = bytes => console.log('LoRa sent:', bytes)
+
+// Simulate incoming LoRa bytes
+m.loraInject([0x48, 0x65, 0x6c, 0x6c, 0x6f])
+
+// fake the number of  satellites seen
+m.SatelliteCount = 5
+
+// Set a GPS fix
+m.gpsSet(51.5074, -0.1278)
+```
