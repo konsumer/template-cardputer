@@ -1,0 +1,38 @@
+<html>
+	<head>
+		<title>Cardputer</title>
+		<style>
+			body {
+			  margin: 0;
+			  height: 100vh;
+			  display: grid;
+			  place-items: center;
+			  background: black;
+			  overflow: hidden;
+			}
+			canvas {
+			  --ratio: 16 / 9;
+			  aspect-ratio: var(--ratio);
+			  width: min(100vw, calc(100vh * (16 / 9)));
+			  height: min(100vh, calc(100vw / (16 / 9)));
+			  display: block;
+			}
+		</style>
+	</head>
+	<body>
+		<canvas id="canvas"></canvas>
+	</body>
+	<script type="module">
+		import loadFW from './index.mjs'
+		const canvas = document.getElementById('canvas');
+		const m = await loadFW({ canvas })
+
+		// you can read into m, if you need to, like FS, or lora (for fake radio)
+
+		// this fixes emscripten's jenky canvas-size stuff
+		const observer = new ResizeObserver(() => {
+			window.dispatchEvent(new Event('resize'));
+		});
+		observer.observe(canvas);
+	</script>
+</html>
