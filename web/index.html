@@ -1,23 +1,6 @@
 <html>
 	<head>
 		<title>Cardputer</title>
-		<style>
-			body {
-			  margin: 0;
-			  height: 100vh;
-			  display: grid;
-			  place-items: center;
-			  background: black;
-			  overflow: hidden;
-			}
-			canvas {
-			  --ratio: 16 / 9;
-			  aspect-ratio: var(--ratio);
-			  width: min(100vw, calc(100vh * (16 / 9)));
-			  height: min(100vh, calc(100vw / (16 / 9)));
-			  display: block;
-			}
-		</style>
 	</head>
 	<body>
 		<canvas id="canvas"></canvas>
@@ -29,21 +12,23 @@
 
 		// You can use web APIs to test things
 
+		// LoRa
 		m.loraOut = bytes => console.log('LoRa sent:', bytes)
-
-		// Simulate incoming LoRa bytes
 		m.loraInject(new TextEncoder().encode("Hello from web."))
 
-		// fake the number of  satellites seen
+		// GPS
 		m.satelliteCount = 5
-
-		// Set a GPS fix
 		m.gpsSet(51.5074, -0.1278)
 
-		// this fixes emscripten's jenky canvas-size stuff
-		const observer = new ResizeObserver(() => {
-			window.dispatchEvent(new Event('resize'));
-		});
-		observer.observe(canvas);
+		// Motion — ax,ay,az (G), gx,gy,gz (deg/s), temp (°C, optional)
+		m.motionSet(0, 0, 1,  0, 0, 0,  25.0)
+
+		// IR is TX-only — hook outgoing transmissions
+		m.irOut = pkt => console.log('IR sent:', pkt) // { protocol, address, command }
+
+		// Power — set simulated battery state (read each frame by c.batteryLevel() etc.)
+		m.batteryLevel   = 85      // 0–100 %
+		m.batteryVoltage = 3900    // mV
+		m.isCharging     = false
 	</script>
 </html>

@@ -1,11 +1,16 @@
-// you can enable/disable with these
+#include "hal/Cardputer.h"
+#include "hal/CardputerSd.h"
+#include "hal/CardputerLora.h"
+#include "hal/CardputerGps.h"
+#include "hal/CardputerMotion.h"
+#include "hal/CardputerIR.h"
 
-#define HAL_LORA
-#define HAL_GPS
-
-#include "hal.h"
-
-int pos_x, pos_y;
+Cardputer      c;
+CardputerSd    sd;
+CardputerLora  lora;
+CardputerGps   gps;
+CardputerMotion motion;
+CardputerIR    ir;
 
 // wrap-around counter
 class Counter {
@@ -13,20 +18,17 @@ public:
   int val;
   int size;
   Counter(int size = 1, int val = 0) : size(size), val(val) {}
-  int increment(int c = 1) { return val = ((val + c) % size + size) % size; }
-  int decrement(int c = 1) { return val = ((val - c) % size + size) % size; }
-  
+  int increment(int n = 1) { return val = ((val + n) % size + size) % size; }
+  int decrement(int n = 1) { return val = ((val - n) % size + size) % size; }
+
   operator int() const { return val; }
 
-  // prefix ++c / --c
-  Counter& operator++() { val = ((val + 1) % size + size) % size; return *this; }
-  Counter& operator--() { val = ((val - 1) % size + size) % size; return *this; }
-  // postfix c++ / c-- (dummy int parameter distinguishes from prefix)
-  Counter operator++(int) { Counter tmp = *this; ++(*this); return tmp; }
-  Counter operator--(int) { Counter tmp = *this; --(*this); return tmp; }
-  // c += n / c -= n
-  Counter& operator+=(int c) { val = ((val + c) % size + size) % size; return *this; }
-  Counter& operator-=(int c) { val = ((val - c) % size + size) % size; return *this; }
+  Counter& operator++()    { val = ((val + 1) % size + size) % size; return *this; }
+  Counter& operator--()    { val = ((val - 1) % size + size) % size; return *this; }
+  Counter  operator++(int) { Counter tmp = *this; ++(*this); return tmp; }
+  Counter  operator--(int) { Counter tmp = *this; --(*this); return tmp; }
+  Counter& operator+=(int n) { val = ((val + n) % size + size) % size; return *this; }
+  Counter& operator-=(int n) { val = ((val - n) % size + size) % size; return *this; }
 };
 
 
@@ -35,7 +37,7 @@ public:
   const char* name;
   Tab(const char* name) : name(name) {}
 
-  virtual void setup() {}  
+  virtual void setup()  {}
   virtual void update() {}
   virtual ~Tab() {}
 };
@@ -43,20 +45,18 @@ public:
 
 class TabKeys : public Tab {
 public:
-  TabKeys() : Tab("Keys") {}
+  TabKeys() : Tab("KEY") {}
 
   void setup() override {
-    gfx.setTextSize(4.0);
-    pos_x = gfx.width() / 2;
-    pos_y = gfx.height() / 2 - 15;
+    _cx = c.width()  / 2;
+    _cy = c.height() / 2 - 15;
   }
-  
-  void update() override {
-    gfx.clear(BLUE);
-    gfx.setTextSize(4.0);
-    gfx.setTextColor(WHITE);
 
-    // special keys: check first, display multi-char label
+  void update() override {
+    c.clear(BLUE);
+    c.setTextSize(4.0);
+    c.setTextColor(WHITE);
+
     static const struct { uint8_t key; const char* label; } specials[] = {
       { KEY_UP,        "UP"        },
       { KEY_DOWN,      "DOWN"      },
@@ -72,224 +72,444 @@ public:
       { ' ',           "SPACE"     },
     };
     for (auto& s : specials) {
-      if (hal_isKeyPressed(s.key)) {
-        gfx.drawCenterString(s.label, pos_x, pos_y);
+      if (c.isKeyPressed(s.key)) {
+        c.drawCenterString(s.label, _cx, _cy);
         return;
       }
     }
 
-    // printable keys: display the character itself
     static const char printable[] =
       "abcdefghijklmnopqrstuvwxyz"
       "1234567890"
       "`-=[]\\;',./"
       "~_+{}|:\"<>?!@#$%^&*()";
-    for (char c : printable) {
-      if (hal_isKeyPressed(c)) {
-        char buf[2] = { c, '\0' };
-        gfx.drawCenterString(buf, pos_x, pos_y);
+    for (char ch : printable) {
+      if (c.isKeyPressed(ch)) {
+        char buf[2] = { ch, '\0' };
+        c.drawCenterString(buf, _cx, _cy);
         return;
       }
     }
   }
+
 private:
-  int pos_x, pos_y;
+  int _cx, _cy;
 };
 
 
 class TabGraphics : public Tab {
 public:
-  TabGraphics() : Tab("Graphics") {}
+  TabGraphics() : Tab("GFX") {}
 
   void setup() override {}
 
   void update() override {
-    int w = gfx.width();
-    int h = gfx.height() - 16; // leave room for tab bar
+    int w = c.width();
+    int h = c.height() - 16;
 
-    // random color helper: independent R/G/B channels
-    auto rc = []() -> uint32_t { return gfx.color888(rand() % 256, rand() % 256, rand() % 256); };
+    auto rc = []() -> uint32_t {
+      return c.color888(rand() % 256, rand() % 256, rand() % 256);
+    };
 
     switch (rand() % 5) {
-      case 0: // filled circle
-        gfx.fillCircle(rand() % w, rand() % h, rand() % 20 + 4, rc());
-        break;
-      case 1: // filled rect
-        gfx.fillRect(rand() % w, rand() % h, rand() % 40 + 4, rand() % 40 + 4, rc());
-        break;
-      case 2: // filled round rect
-        gfx.fillRoundRect(rand() % w, rand() % h, rand() % 40 + 8, rand() % 30 + 8, 4, rc());
-        break;
-      case 3: // filled triangle
-        gfx.fillTriangle(rand() % w, rand() % h, rand() % w, rand() % h, rand() % w, rand() % h, rc());
-        break;
-      case 4: // line
-        gfx.drawLine(rand() % w, rand() % h, rand() % w, rand() % h, rc());
-        break;
+      case 0: c.fillCircle(rand() % w, rand() % h, rand() % 20 + 4, rc()); break;
+      case 1: c.fillRect(rand() % w, rand() % h, rand() % 40 + 4, rand() % 40 + 4, rc()); break;
+      case 2: c.fillRoundRect(rand() % w, rand() % h, rand() % 40 + 8, rand() % 30 + 8, 4, rc()); break;
+      case 3: c.fillTriangle(rand() % w, rand() % h, rand() % w, rand() % h, rand() % w, rand() % h, rc()); break;
+      case 4: c.drawLine(rand() % w, rand() % h, rand() % w, rand() % h, rc()); break;
     }
   }
 };
+
 
 class TabCounter : public Tab {
 public:
   TabCounter() : Tab("SD") {}
 
   void setup() override {
-    if (!hal_sdOk()) return;
+    if (!sd.ok) return;
     char buf[32] = "0";
-    hal_readFileStr("/counter.txt", buf, sizeof(buf));
+    int n = sd.read("/counter.txt", (uint8_t*)buf, sizeof(buf) - 1);
+    if (n > 0) buf[n] = '\0';
     _count = atoi(buf) + 1;
     char out[32];
-    snprintf(out, sizeof(out), "%d", _count);
-    writeFile("/counter.txt", out);
+    int len = snprintf(out, sizeof(out), "%d", _count);
+    sd.write("/counter.txt", (const uint8_t*)out, len);
   }
 
   void update() override {
-    gfx.clear(BLACK);
-    gfx.setTextColor(WHITE);
+    c.clear(BLACK);
+    c.setTextColor(WHITE);
 
-    if (!hal_sdOk()) {
-      gfx.setTextSize(1.5);
-      gfx.drawCenterString("No SD card", gfx.width() / 2, gfx.height() / 2 - 16);
+    if (!sd.ok) {
+      c.setTextSize(1.5);
+      c.drawCenterString("No SD card", c.width() / 2, c.height() / 2 - 16);
       return;
     }
 
+    c.setTextSize(1);
+    c.drawCenterString("Times you have loaded this tab:", c.width() / 2, c.height() / 2 - 40);
+
     char buf[32];
     snprintf(buf, sizeof(buf), "%d", _count);
-    gfx.setTextSize(4.0);
-    gfx.drawCenterString(buf, gfx.width() / 2, gfx.height() / 2 - 24);
+    c.setTextSize(4.0);
+    c.drawCenterString(buf, c.width() / 2, c.height() / 2 - 24);
   }
 
 private:
   int _count = 0;
-
-  void _save() {
-    char buf[32];
-    snprintf(buf, sizeof(buf), "%d", _count);
-    writeFile("/counter.txt", buf);
-  }
 };
+
 
 class TabRadio : public Tab {
 public:
-  TabRadio() : Tab("Radio") {}
+  TabRadio() : Tab("RAD") {}
 
   void setup() override {
-    #ifdef HAL_LORA
-    _log[0][0] = '\0';
     _logCount = 0;
-    hal_onLoraMessage([this](uint8_t *data, int len) {
-      // shift log up and add new entry at bottom
+    lora.onMessage = [this](uint8_t *data, int len) {
       if (_logCount < LOG_LINES) _logCount++;
-      for (int i = 0; i < _logCount - 1; i++) {
-        memcpy(_log[i], _log[i + 1], LOG_WIDTH);
-      }
+      for (int i = 0; i < _logCount - 1; i++) memcpy(_log[i], _log[i + 1], LOG_WIDTH);
       int n = len < LOG_WIDTH - 1 ? len : LOG_WIDTH - 1;
       memcpy(_log[_logCount - 1], data, n);
       _log[_logCount - 1][n] = '\0';
-    });
-    #endif // HAL_LORA
+    };
   }
 
   void update() override {
-    int cx = gfx.width() / 2;
-    int tabBarH = 16;
-    int h = gfx.height() - tabBarH;
+    int cx      = c.width() / 2;
+    int h       = c.height() - 16;
 
-    gfx.clear(BLACK);
-    gfx.setTextColor(WHITE);
-    gfx.setTextSize(1.0);
+    c.clear(BLACK);
+    c.setTextSize(1.0);
 
     // --- GPS ---
-    #ifdef HAL_GPS
     double lat, lng;
-    int sats = hal_gpsSatellites();
-    if (hal_getLocation(&lat, &lng)) {
+    int sats = gps.satellites();
+    if (gps.getLocation(&lat, &lng)) {
       char buf[48];
       snprintf(buf, sizeof(buf), "%.5f, %.5f", lat, lng);
-      gfx.setTextColor(TFT_GREEN);
-      gfx.drawCenterString(buf, cx, 2);
+      c.setTextColor(TFT_GREEN);
+      c.drawCenterString(buf, cx, 2);
     } else {
       char buf[32];
       snprintf(buf, sizeof(buf), "GPS: no fix (sats:%d)", sats);
-      gfx.setTextColor(sats > 0 ? TFT_YELLOW : TFT_DARKGREY);
-      gfx.drawCenterString(buf, cx, 2);
+      c.setTextColor(sats > 0 ? TFT_YELLOW : TFT_DARKGREY);
+      c.drawCenterString(buf, cx, 2);
     }
-    #else
-    gfx.drawCenterString("GPS not enabled.", cx, 2);
-    #endif // HAL_GPS
-
 
     // --- LoRa log ---
     int lineH = 12;
-    int logY = 16;
-
-    gfx.setTextColor(WHITE);
-
-    #ifdef HAL_LORA
+    int logY  = 16;
+    c.setTextColor(WHITE);
     for (int i = 0; i < _logCount; i++) {
-      gfx.drawString(_log[i], 2, logY + i * lineH);
+      c.drawString(_log[i], 2, logY + i * lineH);
     }
-    // --- Send button: ENTER sends a test packet ---
-    gfx.setTextColor(TFT_YELLOW);
-    gfx.drawCenterString("[ENTER] send ping", cx, h - 14);
 
-    if (hal_isKeyPressed(KEY_ENTER)) {
-      const char *msg = "ping";
-      hal_sendLoraMessage((uint8_t*)msg, strlen(msg));
+    if (_sentTimer > 0) {
+      --_sentTimer;
+      c.setTextColor(TFT_GREEN);
+      c.drawCenterString("Sent LoRa!", cx, h - 26);
     }
-    #else
-    gfx.drawString("LoRa not enabled.", 2, logY + lineH);
-    #endif // HAL_LORA
-    
+
+    c.setTextColor(TFT_YELLOW);
+    c.drawCenterString("[ENTER] send ping", cx, h - 14);
+
+    bool enter = c.isKeyPressed(KEY_ENTER);
+    if (enter && !_prevEnter) {
+      lora.sendMessage("ping");
+      _sentTimer = 30;
+    }
+    _prevEnter = enter;
   }
 
 private:
   static const int LOG_LINES = 6;
   static const int LOG_WIDTH = 40;
   char _log[LOG_LINES][LOG_WIDTH];
-  int  _logCount = 0;
+  int  _logCount  = 0;
+  int  _sentTimer = 0;
+  bool _prevEnter = false;
 };
 
-std::vector<Tab*> tabs = { new TabKeys(), new TabGraphics(), new TabCounter(), new TabRadio() };
+
+class TabMotion : public Tab {
+public:
+  TabMotion() : Tab("ACC") {}
+
+  void setup() override {}
+
+  void update() override {
+    int cx = c.width()  / 2;
+    int cy = c.height() / 2 - 8;
+    int w  = c.width();
+    int h  = c.height() - 16;
+
+    c.clear(BLACK);
+    c.setTextSize(1.0);
+
+    if (!motion.isEnabled()) {
+      c.setTextColor(TFT_DARKGREY);
+      c.drawCenterString("No IMU (Cardputer-Adv only)", cx, cy);
+      return;
+    }
+
+    float ax, ay, az, gx, gy, gz, temp;
+    motion.getAccel(&ax, &ay, &az);
+    motion.getGyro(&gx, &gy, &gz);
+    motion.getTemp(&temp);
+
+    // --- Accel bar graph — horizontal bars for X/Y/Z, range -2G..+2G ---
+    const float SCALE = 2.0f;
+    const int barW    = w / 2 - 8;
+    const int barH    = 10;
+    const int col1    = 4;
+    const int col2    = w / 2 + 4;
+    int y             = 4;
+
+    auto drawBar = [&](int bx, int by, float val, float scale, uint32_t col, const char* label) {
+      c.setTextColor(TFT_DARKGREY);
+      c.drawString(label, bx, by);
+      int bary = by + 11;
+      c.drawRect(bx, bary, barW, barH, TFT_DARKGREY);
+      int filled = (int)((val / scale + 1.0f) * 0.5f * barW);
+      if (filled < 0)    filled = 0;
+      if (filled > barW) filled = barW;
+      c.fillRect(bx, bary, filled, barH, col);
+      // centre marker
+      c.drawFastVLine(bx + barW / 2, bary, barH, WHITE);
+    };
+
+    c.setTextColor(WHITE);
+    c.drawString("Accel (G)", col1, y);
+    c.drawString("Gyro (dps)", col2, y);
+    y += 10;
+
+    drawBar(col1, y,      ax, SCALE, TFT_RED,   "X");
+    drawBar(col2, y,      gx, 250.f, TFT_RED,   "X");
+    y += 24;
+    drawBar(col1, y,      ay, SCALE, TFT_GREEN, "Y");
+    drawBar(col2, y,      gy, 250.f, TFT_GREEN, "Y");
+    y += 24;
+    drawBar(col1, y,      az, SCALE, TFT_BLUE,  "Z");
+    drawBar(col2, y,      gz, 250.f, TFT_BLUE,  "Z");
+    y += 24;
+
+    // --- Numeric readout ---
+    char buf[48];
+    snprintf(buf, sizeof(buf), "%.2f %.2f %.2f G", ax, ay, az);
+    c.setTextColor(TFT_LIGHTGREY);
+    c.drawCenterString(buf, cx, y);
+    y += 12;
+
+    snprintf(buf, sizeof(buf), "%.1f %.1f %.1f dps", gx, gy, gz);
+    c.drawCenterString(buf, cx, y);
+    y += 12;
+
+    snprintf(buf, sizeof(buf), "Temp: %.1f C", temp);
+    c.drawCenterString(buf, cx, y);
+  }
+};
+
+
+class TabIR : public Tab {
+public:
+  TabIR() : Tab("IR") {}
+
+  void setup() override {
+    _sent = false;
+  }
+
+  void update() override {
+    int cx = c.width()  / 2;
+    int h  = c.height() - 16;
+
+    c.clear(BLACK);
+    c.setTextSize(1.0);
+
+    // --- Protocol selector ---
+    static const struct { const char* name; uint8_t proto; } protocols[] = {
+      { "NEC",      3  },
+      { "Samsung",  10 },
+      { "Sony",     12 },
+      { "RC5",      7  },
+      { "RC6",      8  },
+      { "Panasonic",6  },
+    };
+    static const int NPROTO = sizeof(protocols) / sizeof(protocols[0]);
+
+    // Up/Down selects protocol (edge-triggered)
+    bool up   = c.isKeyPressed(KEY_UP);
+    bool down = c.isKeyPressed(KEY_DOWN);
+    if (up   && !_prevUp)   _proto = (_proto - 1 + NPROTO) % NPROTO;
+    if (down && !_prevDown) _proto = (_proto + 1)          % NPROTO;
+    _prevUp   = up;
+    _prevDown = down;
+
+    // Draw protocol list
+    c.setTextColor(TFT_DARKGREY);
+    c.drawString("Protocol:", 4, 4);
+    for (int i = 0; i < NPROTO; i++) {
+      bool sel = i == _proto;
+      c.setTextColor(sel ? TFT_YELLOW : TFT_DARKGREY);
+      c.drawString(protocols[i].name, 4, 16 + i * 12);
+      if (sel) c.drawString("<", 70, 16 + i * 12);
+    }
+
+    // Address / command display
+    char buf[32];
+    snprintf(buf, sizeof(buf), "Addr: 0x%04X", _addr);
+    c.setTextColor(WHITE);
+    c.drawString(buf, cx + 4, 16);
+    snprintf(buf, sizeof(buf), "Cmd:  0x%02X",  _cmd);
+    c.drawString(buf, cx + 4, 28);
+
+    // Send on ENTER
+    if (c.isKeyPressed(KEY_ENTER) && !_prevEnter) {
+      ir.send(protocols[_proto].proto, _addr, _cmd);
+      _sent       = true;
+      _sentTimer  = 30; // frames to show flash
+    }
+    _prevEnter = c.isKeyPressed(KEY_ENTER);
+
+    // Sent flash
+    if (_sentTimer > 0) {
+      --_sentTimer;
+      c.setTextColor(TFT_GREEN);
+      snprintf(buf, sizeof(buf), "Sent %s!", protocols[_proto].name);
+      c.drawCenterString(buf, cx, h - 26);
+    }
+
+    c.setTextColor(TFT_YELLOW);
+    c.drawCenterString("[UP/DN] proto  [ENTER] send", cx, h - 14);
+  }
+
+private:
+  int  _proto     = 0;
+  uint16_t _addr  = 0x1111;
+  uint8_t  _cmd   = 0x34;
+  bool _sent      = false;
+  int  _sentTimer = 0;
+  bool _prevUp    = false;
+  bool _prevDown  = false;
+  bool _prevEnter = false;
+};
+
+
+class TabBattery : public Tab {
+public:
+  TabBattery() : Tab("BAT") {}
+
+  void setup() override {}
+
+  void update() override {
+    int cx      = c.width()  / 2;
+    int cy      = c.height() / 2;
+    int w       = c.width();
+
+    bool  charging = c.isCharging();
+    int   level    = c.batteryLevel();
+    int   voltage  = c.batteryVoltage();
+
+    c.clear(BLACK);
+    c.setTextSize(1.0);
+
+    // --- Battery icon ---
+    const int bw = 80, bh = 34;
+    const int bx = cx - bw / 2, by = cy - bh / 2 - 14;
+    const int nub = 5;
+    // Outer rect
+    c.drawRect(bx, by, bw, bh, WHITE);
+    // Nub
+    c.fillRect(bx + bw, by + bh / 2 - nub / 2, nub, nub, WHITE);
+    // Fill (green > 20%, yellow > 10%, red otherwise)
+    int filled = (int)((float)level / 100.f * (bw - 4));
+    uint32_t col = level > 20 ? TFT_GREEN : (level > 10 ? TFT_YELLOW : TFT_RED);
+    if (filled > 0) c.fillRect(bx + 2, by + 2, filled, bh - 4, col);
+
+    // Percentage centred in icon (or "?" if ADC error)
+    char buf[16];
+    if (level < 0) {
+      c.setTextColor(TFT_DARKGREY);
+      c.drawCenterString("?", cx, by + bh / 2 - 4);
+    } else {
+      snprintf(buf, sizeof(buf), "%d%%", level);
+      c.setTextColor(WHITE);
+      c.drawCenterString(buf, cx, by + bh / 2 - 4);
+    }
+
+    // Voltage
+    if (voltage > 0) {
+      snprintf(buf, sizeof(buf), "%d mV", voltage);
+    } else {
+      snprintf(buf, sizeof(buf), "-- mV");
+    }
+    c.setTextColor(TFT_LIGHTGREY);
+    c.drawCenterString(buf, cx, by + bh + 6);
+
+    // Charging indicator (Cardputer has no charge detection — always "unknown")
+    if (charging) {
+      c.setTextColor(TFT_YELLOW);
+      c.drawCenterString("CHARGING", cx, by + bh + 18);
+    } else {
+      c.setTextColor(TFT_DARKGREY);
+      c.drawCenterString("on battery", cx, by + bh + 18);
+    }
+  }
+};
+
+
+std::vector<Tab*> tabs = {
+  new TabKeys(),
+  new TabGraphics(),
+  new TabCounter(),
+  new TabRadio(),
+  new TabMotion(),
+  new TabIR(),
+  new TabBattery(),
+};
 Counter currentTab(tabs.size());
 
 void setup(void) {
-  hal_setup();
+  c.setup();
+  sd.setup();
+  lora.setup();
+  gps.setup();
+  motion.setup();
+  ir.setup();
   tabs[currentTab]->setup();
 }
 
 void loop(void) {
-  hal_loop();
+  lora.loop();
+  gps.loop();
+  motion.loop();
+
   tabs[currentTab]->update();
 
-  // draw tabs
-  gfx.setTextSize(1.0);
+  // draw tab bar
+  c.setTextSize(1.0);
   int count = tabs.size();
-  int w = gfx.width() / count;
+  int w = c.width() / count;
   int h = 16;
-  int y = gfx.height() - h;
+  int y = c.height() - h;
   for (int i = 0; i < count; i++) {
     int x = i * w;
     bool active = i == currentTab;
-    gfx.fillRoundRect(x + 1, y, w - 2, h - 2, 3, active ? WHITE : DARKGREY);
-    gfx.setTextColor(active ? BLACK : WHITE);
-    gfx.drawCenterString(tabs[i]->name, x + w / 2, y + 4);
+    c.fillRoundRect(x + 1, y, w - 2, h - 2, 3, active ? WHITE : DARKGREY);
+    c.setTextColor(active ? BLACK : WHITE);
+    c.drawCenterString(tabs[i]->name, x + w / 2, y + 4);
   }
 
-  // left/right switches tabs
-  bool left  = hal_isKeyPressed(KEY_LEFT);
-  bool right = hal_isKeyPressed(KEY_RIGHT);
+  // left/right switches tabs (edge-triggered)
+  bool left  = c.isKeyPressed(KEY_LEFT);
+  bool right = c.isKeyPressed(KEY_RIGHT);
   static bool prevLeft  = false;
   static bool prevRight = false;
-  if (left && !prevLeft) {
-    currentTab--;
-    tabs[currentTab]->setup();
-  }
-  if (right && !prevRight) {
-    currentTab++;
-    tabs[currentTab]->setup();
-  }
+  if (left && !prevLeft)   { --currentTab; tabs[currentTab]->setup(); }
+  if (right && !prevRight) { ++currentTab; tabs[currentTab]->setup(); }
   prevLeft  = left;
   prevRight = right;
+
+  c.loop();  // flush canvas to display — must be last
 }
