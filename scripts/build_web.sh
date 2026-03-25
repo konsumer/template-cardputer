@@ -9,7 +9,7 @@ LIBDIR=.pio/build/web
 OUTDIR=web
 LIBSRC=".pio/libdeps/native/M5GFX/src"
 INCLUDES="-I $LIBSRC"
-DEFINES="-D __EMSCRIPTEN__ -D LGFX_USE_SDL -D M5GFX_BOARD=board_M5Cardputer"
+DEFINES="-D __EMSCRIPTEN__ -D LGFX_USE_SDL -D M5GFX_BOARD=board_M5Cardputer -D HAL_LORA -D HAL_GPS"
 EMFLAGS="-s USE_SDL=2 -s WASM=1 -s ALLOW_MEMORY_GROWTH=1 -s FORCE_FILESYSTEM=1 -lidbfs.js --pre-js scripts/pre.js -s EXPORTED_FUNCTIONS=['_main','_hal_loraInject','_hal_gpsSetLocation','_malloc','_free'] -s EXPORTED_RUNTIME_METHODS=['HEAPU8']"
 
 # In release mode add SINGLE_FILE so the page is self-contained

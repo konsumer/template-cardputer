@@ -1,3 +1,8 @@
+// you can enable/disable with these
+
+#define HAL_LORA
+#define HAL_GPS
+
 #include "hal.h"
 
 int pos_x, pos_y;
@@ -170,6 +175,7 @@ public:
   TabRadio() : Tab("Radio") {}
 
   void setup() override {
+    #ifdef HAL_LORA
     _log[0][0] = '\0';
     _logCount = 0;
     hal_onLoraMessage([this](uint8_t *data, int len) {
@@ -182,6 +188,7 @@ public:
       memcpy(_log[_logCount - 1], data, n);
       _log[_logCount - 1][n] = '\0';
     });
+    #endif // HAL_LORA
   }
 
   void update() override {
@@ -191,11 +198,12 @@ public:
 
     gfx.clear(BLACK);
     gfx.setTextColor(WHITE);
+    gfx.setTextSize(1.0);
 
     // --- GPS ---
+    #ifdef HAL_GPS
     double lat, lng;
     int sats = hal_gpsSatellites();
-    gfx.setTextSize(1.0);
     if (hal_getLocation(&lat, &lng)) {
       char buf[48];
       snprintf(buf, sizeof(buf), "%.5f, %.5f", lat, lng);
@@ -207,15 +215,21 @@ public:
       gfx.setTextColor(sats > 0 ? TFT_YELLOW : TFT_DARKGREY);
       gfx.drawCenterString(buf, cx, 2);
     }
+    #else
+    gfx.drawCenterString("GPS not enabled.", cx, 2);
+    #endif // HAL_GPS
+
 
     // --- LoRa log ---
-    gfx.setTextColor(WHITE);
     int lineH = 12;
     int logY = 16;
+
+    gfx.setTextColor(WHITE);
+
+    #ifdef HAL_LORA
     for (int i = 0; i < _logCount; i++) {
       gfx.drawString(_log[i], 2, logY + i * lineH);
     }
-
     // --- Send button: ENTER sends a test packet ---
     gfx.setTextColor(TFT_YELLOW);
     gfx.drawCenterString("[ENTER] send ping", cx, h - 14);
@@ -224,6 +238,10 @@ public:
       const char *msg = "ping";
       hal_sendLoraMessage((uint8_t*)msg, strlen(msg));
     }
+    #else
+    gfx.drawString("LoRa not enabled.", 2, logY + lineH);
+    #endif // HAL_LORA
+    
   }
 
 private:
