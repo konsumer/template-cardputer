@@ -158,19 +158,24 @@ public:
 #endif
   }
 
-  // true only if actively charging (false for unknown / discharging)
-  // Note: Cardputer has no charging detection circuit — always returns false on hardware.
-  bool isCharging() {
+  // Charging state: 0 = discharging, 1 = charging, 2 = unknown.
+  // Cardputer has no charging detection circuit — always returns 2 (unknown).
+  // Devices with a PMIC (AXP192, AXP2101 etc.) return 0 or 1.
+  int chargingState() {
 #ifdef SDL_h_
 #ifdef __EMSCRIPTEN__
-    return (bool)EM_ASM_INT({ return Module.isCharging ? 1 : 0; });
+    return EM_ASM_INT({ return (Module.isCharging === true) ? 1
+                              : (Module.isCharging === false) ? 0 : 2; });
 #else
-    return false;
+    return 2; // unknown on native SDL
 #endif
 #else
-    return M5Cardputer.Power.isCharging() == m5::Power_Class::is_charging;
+    return (int)M5Cardputer.Power.isCharging();
 #endif
   }
+
+  // Convenience: true only when charging is explicitly confirmed.
+  bool isCharging() { return chargingState() == 1; }
 
   // Battery level 0–100 %.
   // Averages ADC_SAMPLES reads to smooth the noisy ADC on GPIO10.

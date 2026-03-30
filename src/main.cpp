@@ -424,7 +424,7 @@ public:
     int cy      = c.height() / 2;
     int w       = c.width();
 
-    bool charging = _charging;
+    int  charging = _chargingState;
     int  level    = _level;
     int  voltage  = _voltage;
 
@@ -464,27 +464,31 @@ public:
     c.setTextColor(TFT_LIGHTGREY);
     c.drawCenterString(buf, cx, by + bh + 6);
 
-    // Charging indicator (Cardputer has no charge detection — always "unknown")
-    if (charging) {
+    // Charging state
+    if (charging == 1) {
       c.setTextColor(TFT_YELLOW);
       c.drawCenterString("CHARGING", cx, by + bh + 18);
-    } else {
+    } else if (charging == 0) {
       c.setTextColor(TFT_DARKGREY);
       c.drawCenterString("on battery", cx, by + bh + 18);
+    } else {
+      // unknown — Cardputer has no charging detection circuit
+      c.setTextColor(TFT_DARKGREY);
+      c.drawCenterString("charge unknown", cx, by + bh + 18);
     }
   }
 
 private:
   CardputerTask _task;
-  bool _charging = false;
-  int  _level    = -1;
-  int  _voltage  = 0;
-  int  _frames   = 0;   // SDL frame counter for 2s throttle
+  int  _chargingState = 2;  // 0=discharging, 1=charging, 2=unknown
+  int  _level         = -1;
+  int  _voltage       = 0;
+  int  _frames        = 0;  // SDL frame counter for 2s throttle
 
   void _read() {
-    _charging = c.isCharging();
-    _level    = c.batteryLevel();
-    _voltage  = c.batteryVoltage();
+    _chargingState = c.chargingState();
+    _level         = c.batteryLevel();
+    _voltage       = c.batteryVoltage();
   }
 };
 
