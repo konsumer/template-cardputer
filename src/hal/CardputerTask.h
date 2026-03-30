@@ -4,6 +4,13 @@
 // SDL/web: cooperative — each task's function is called once per
 //          CardputerTaskManager::update(), which you call in loop().
 //
+// On SDL, CardputerTask::delay(ms) acts as a rate-limiter: the task will
+// not be invoked again until at least `ms` milliseconds have elapsed since
+// the delay() call.  Write task lambdas the same way on both platforms:
+//
+//   CardputerTask::delay(2000);  // blocks on HW, throttles on SDL
+//   doWork();
+//
 // Usage:
 //   CardputerTaskManager tasks;
 //
@@ -12,9 +19,8 @@
 //   void setup() {
 //     tasks.setup();
 //     t1.start("blink", 2048, []() {
-//       // on hardware: loops forever in its own FreeRTOS task
-//       // on SDL/web: called once per tasks.update()
-//       CardputerTask::delay(500);  // yields on SDL, real delay on hardware
+//       CardputerTask::delay(500);
+//       doWork();
 //     }, &tasks);
 //   }
 //
@@ -28,6 +34,8 @@
 
 #ifndef SDL_h_
 #include "M5Cardputer.h"
+#else
+#include <SDL2/SDL.h>
 #endif
 
 // Forward declaration so CardputerTask::start() can accept a manager pointer.
@@ -67,28 +75,38 @@ public:
 
   bool isRunning() const { return _running; }
 
-  // Portable delay. Use inside task functions instead of vTaskDelay/SDL_Delay.
-  // On SDL this is a no-op (the task runs cooperatively — sleeping would block
-  // the whole app). Structure SDL tasks as state machines if you need timing.
+  // Portable delay. On hardware this is a real blocking vTaskDelay.
+  // On SDL it schedules the next invocation of this task's lambda to occur
+  // no sooner than `ms` milliseconds from now (non-blocking, cooperative).
+  // Call it at the top of the task lambda, just like you would on hardware.
   static void delay(uint32_t ms) {
 #ifndef SDL_h_
     vTaskDelay(pdMS_TO_TICKS(ms));
 #else
-    (void)ms;
+    if (_current) _current->_nextMs = SDL_GetTicks() + ms;
 #endif
   }
 
   // Called by CardputerTaskManager::update() — not for direct use.
   void _poll() {
 #ifdef SDL_h_
-    if (_running && _fn) _fn();
+    if (!_running || !_fn) return;
+    uint32_t now = SDL_GetTicks();
+    if (now < _nextMs) return;
+    _current = this;
+    _fn();
+    _current = nullptr;
 #endif
   }
 
 private:
   std::function<void()> _fn;
-  bool  _running = false;
-  void* _handle  = nullptr;
+  bool     _running = false;
+  void*    _handle  = nullptr;
+#ifdef SDL_h_
+  uint32_t _nextMs  = 0;         // earliest time (SDL_GetTicks) for next poll
+  static CardputerTask* _current; // task currently executing (set during _poll)
+#endif
 };
 
 // ---------------------------------------------------------------------------
@@ -122,6 +140,13 @@ private:
   std::vector<CardputerTask*> _tasks;
 #endif
 };
+
+// ---------------------------------------------------------------------------
+// CardputerTask static member definition (SDL only)
+// ---------------------------------------------------------------------------
+#ifdef SDL_h_
+inline CardputerTask* CardputerTask::_current = nullptr;
+#endif
 
 // ---------------------------------------------------------------------------
 // CardputerTask::start() — defined here after CardputerTaskManager is complete

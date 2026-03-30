@@ -405,17 +405,11 @@ public:
   void setup() override {
     // Read immediately so we have values before the first 2s tick.
     _read();
-    // Task: re-read every 2s. On hardware this is a real FreeRTOS task;
-    // on SDL it's called each loop() by tasks.update() and uses a frame
-    // counter to throttle (CardputerTask::delay is a no-op on SDL).
+    // Re-read every 2s. On hardware this is a real FreeRTOS task;
+    // on SDL, delay() throttles the cooperative poll to real wall-clock time.
     _task.start("battery", 2048, [this]() {
-#ifdef SDL_h_
-      // Cooperative: count frames (~60fps), refresh every ~120 frames = ~2s
-      if (++_frames >= 120) { _frames = 0; _read(); }
-#else
       CardputerTask::delay(2000);
       _read();
-#endif
     }, &tasks);
   }
 
@@ -483,7 +477,6 @@ private:
   int  _chargingState = 2;  // 0=discharging, 1=charging, 2=unknown
   int  _level         = -1;
   int  _voltage       = 0;
-  int  _frames        = 0;  // SDL frame counter for 2s throttle
 
   void _read() {
     _chargingState = c.chargingState();
